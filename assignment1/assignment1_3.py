@@ -122,9 +122,12 @@ def compute_vertex_features(node_list, data_graph):
         in_degree[node] = len(neighborhood_in[node])
         out_degree[node] = len(neighborhood_out[node])
         bi_degree[node] = len(neighborhood_in[node]).intersection(neighborhood_out[node])
-        in_degree_densities[node] = in_degree[node] / degree[node]
-        out_degree_densities[node] = out_degree[node] / degree[node]
-        bi_degree_densities[node] = bi_degree[node] / degree[node]
+        if len(neighborhood[node]) > 0:
+            in_degree_densities[node] = in_degree[node] / degree[node]
+            out_degree_densities[node] = out_degree[node] / degree[node]
+            bi_degree_densities[node] = bi_degree[node] / degree[node]
+        else:
+            in_degree_densities[node] = out_degree_densities[node] = bi_degree_densities[node] = 0
     return neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive, in_degree, out_degree, bi_degree, in_degree_densities, out_degree_densities, bi_degree_densities
 
 def extract_positive_samples(data_graph, train_edge_list, samples_to_extract):
@@ -141,26 +144,18 @@ def extract_positive_samples(data_graph, train_edge_list, samples_to_extract):
 def extract_negative_samples(node_list, adjacency_matrix, samples_to_extract):
     logger.info("Extracting All Negative Samples")
     negative_edge_list = []
-    negative_node_list = []
-    count = 0
-    for i in range(adjacency_matrix.shape[0]):
-        for j in range(adjacency_matrix.shape[1]):
-            if i != j:
-                if adjacency_matrix[i,j] == 0:
-                    if random.choice([True, False]):
-                        if count % 100:
-                            logger.debug("Negative Sample Count: {0}".format(count))
-                        count = count + 1
-                        negative_edge_list.append((node_list[i], node_list[j]))
-                        negative_node_list.append(i)
-                        negative_node_list.append(j)
-            if count > samples_to_extract:
-                break
-        if count > samples_to_extract:
-                break
-    return negative_edge_list, list(set(negative_node_list))
+    negative_node_set = set()
+    available_pairs = [(i, j) for i in range(adjacency_matrix.shape[0]) for j in range(i + 1, adjacency_matrix.shape[1]) if adjacency_matrix[i, j] == 0]
+    if len(available_pairs) > samples_to_extract:
+        sampled_pairs = random.sample(available_pairs, samples_to_extract)
+    else:
+        sampled_pairs = available_pairs
+    for i, j in sampled_pairs:
+        negative_edge_list.append((node_list[i], node_list[j]))
+        negative_node_set.update([node_list[i], node_list[j]])
+    return negative_edge_list, list(negative_node_set)
 
-def compute_complex_vertex_features(node_list, data_graph):
+def compute_complex_vertex_features(node_list, data_graph, neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive):
     logger.info("Computing Complex Vertex Features from Graph")
     neighborhood_sub_graphs = {}
     neighborhood_inclusive_sub_graphs = {}
@@ -182,24 +177,22 @@ def compute_complex_vertex_features(node_list, data_graph):
         neighborhood_inclusive_sub_graphs_link_number[node] = len(neighborhood_inclusive_sub_graphs[node].edges())
         try:
             neighborhood_sub_graphs_densities[node] = len(neighborhood[node]) / neighborhood_sub_graphs_link_number[node]
-        except:
-            neighborhood_sub_graphs_densities[node] = 1
-        try:
             neighborhood_inclusive_sub_graphs_densities[node] = len(neighborhood[node]) / neighborhood_inclusive_sub_graphs_link_number[node]
         except:
-            neighborhood_inclusive_sub_graphs_densities[node] = 1
+            neighborhood_sub_graphs_densities[node] = 0
+            neighborhood_inclusive_sub_graphs_densities[node] = 0
         try:
             avg_scc[node] = len(neighborhood[node]) / nx.number_strongly_connected_components(neighborhood_sub_graphs[node])
         except:
-            avg_scc[node] = 1
+            avg_scc[node] = 0
         try:
             avg_wcc[node] = len(neighborhood[node]) / nx.number_weakly_connected_components(neighborhood_sub_graphs[node])
         except:
-            avg_scc[node] = 1
+            avg_scc[node] = 0
         try:
             avg_scc_inclusive[node] = len(neighborhood[node]) / nx.number_strongly_connected_components(neighborhood_inclusive_sub_graphs[node])
         except:
-            avg_scc[node] = 1
+            avg_scc[node] = 0
         count = count + 1
     return neighborhood_sub_graphs, neighborhood_inclusive_sub_graphs, neighborhood_sub_graphs_link_number, neighborhood_inclusive_sub_graphs_link_number, neighborhood_sub_graphs_densities, neighborhood_inclusive_sub_graphs_densities, avg_scc, avg_wcc, avg_scc_inclusive
 
@@ -220,14 +213,14 @@ def compute_link_features(sample_edge_list, train_edge_list, neighborhood, neigh
     for pair in sample_edge_list:
         if count % 100 == 0:
             logger.debug("Current Link Feature Count Computations: {0}".format(count))
-        common_friends[pair] = len(set(neighborhood[pair[0]]).intersection(set(neighborhood[pair[1]])))
-        common_friends_in[pair] = len(set(neighborhood_in[pair[0]]).intersection(set(neighborhood_in[pair[1]])))
-        common_friends_out[pair] = len(set(neighborhood_out[pair[0]]).intersection(set(neighborhood_out[pair[1]])))
-        common_friends_bi[pair] = len(set(neighborhood_in[pair[0]]).intersection(set(neighborhood_out[pair[1]])))
-        total_friends[pair] = len(set(neighborhood[pair[0]]).union(set(neighborhood[pair[1]])))
-        jaccards_coefficient[pair] = len(set(neighborhood[pair[0]]).intersection(set(neighborhood[pair[1]]))) / len(set(neighborhood[pair[0]]).union(set(neighborhood[pair[1]])))
-        transient_friends[pair] = len(set(neighborhood_out[pair[0]]).intersection(set(neighborhood_in[pair[1]])))
-        pas[pair] = len(set(neighborhood[pair[0]])) * len(set(neighborhood[pair[1]]))
+        common_friends[pair] = len(neighborhood[pair[0]]).intersection(neighborhood[pair[1]])
+        common_friends_in[pair] = len(neighborhood_in[pair[0]]).intersection(neighborhood_in[pair[1]])
+        common_friends_out[pair] = len(neighborhood_out[pair[0]]).intersection(neighborhood_out[pair[1]])
+        common_friends_bi[pair] = len(neighborhood_in[pair[0]]).intersection(neighborhood_out[pair[1]])
+        total_friends[pair] = len(neighborhood[pair[0]]).union(neighborhood[pair[1]])
+        jaccards_coefficient[pair] = common_friends[pair] / total_friends[pair] if total_friends[pair] > 0 else 0
+        transient_friends[pair] = len(neighborhood_out[pair[0]]).intersection(neighborhood_in[pair[1]])
+        pas[pair] = len(neighborhood[pair[0]]) * len(neighborhood[pair[1]])
         # friends_measure[pair] = 0
         # for node_u in neighborhood[pair[0]]:
         #   for node_v in neighborhood[pair[1]]:
@@ -244,7 +237,7 @@ neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive, in_degr
 positive_edge_list, positive_node_list = extract_positive_samples(data_graph, train_edge_list, number_of_samples)
 negative_edge_list, negative_node_list = extract_negative_samples(node_list, adjacency_matrix, number_of_samples)
 common_friends, common_friends_in, common_friends_out, common_friends_bi, total_friends, jaccards_coefficient, transient_friends, pas, friends_measure, opposite_direction_friends = compute_link_features(positive_edge_list + negative_edge_list, train_edge_list, neighborhood, neighborhood_in, neighborhood_out)
-neighborhood_sub_graphs, neighborhood_inclusive_sub_graphs, neighborhood_sub_graphs_link_number, neighborhood_inclusive_sub_graphs_link_number, neighborhood_sub_graphs_densities, neighborhood_inclusive_sub_graphs_densities, avg_scc, avg_wcc, avg_scc_inclusive = compute_complex_vertex_features(list(set(positive_node_list + negative_node_list + test_node_list)), data_graph)
+neighborhood_sub_graphs, neighborhood_inclusive_sub_graphs, neighborhood_sub_graphs_link_number, neighborhood_inclusive_sub_graphs_link_number, neighborhood_sub_graphs_densities, neighborhood_inclusive_sub_graphs_densities, avg_scc, avg_wcc, avg_scc_inclusive = compute_complex_vertex_features(list(set(positive_node_list + negative_node_list + test_node_list)), data_graph, neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive)
 features = []
 labels = []
 for edge in positive_edge_list:
