@@ -52,8 +52,13 @@ def parse_csv(csv_path):
 		entries = file.readlines()[1:]
 	test_edge_list = []
 	for entry in entries:
-		test_edge_list.append((entry.split(",")[1], entry.split(",")[2]))
-	return node_list, train_edge_list, test_edge_list
+		test_edge_list.append((int(entry.split(",")[1]), int(entry.split(",")[2].split("\n")[0])))
+	test_node_list = []
+	for edge in test_edge_list:
+		for node in edge:
+			test_node_list.append(node)
+	test_node_list = list(set(test_node_list))
+	return node_list, train_edge_list, test_edge_list, test_node_list
 
 def construct_graph(node_list, train_edge_list):
 	logger.info("Constructing Graph from CSV Data")
@@ -218,13 +223,13 @@ def compute_link_features(sample_edge_list, train_edge_list, neighborhood, neigh
 	return common_friends, common_friends_in, common_friends_out, common_friends_bi, total_friends, jaccards_coefficient, transient_friends, pas, friends_measure, opposite_direction_friends
 
 logger.info("CSV Path: {0}".format(os.path.realpath(args.csv_path)))
-node_list, train_edge_list, test_edge_list = parse_csv(os.path.realpath(args.csv_path))
+node_list, train_edge_list, test_edge_list, test_node_list = parse_csv(os.path.realpath(args.csv_path))
 data_graph, adjacency_matrix = construct_graph(node_list, train_edge_list)
 neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive, in_degree, out_degree, bi_degree, in_degree_densities, out_degree_densities, bi_degree_densities = compute_vertex_features(node_list, data_graph)
 positive_edge_list, positive_node_list = extract_positive_samples(data_graph, train_edge_list, number_of_samples)
 negative_edge_list, negative_node_list = extract_negative_samples(node_list, adjacency_matrix, number_of_samples)
 common_friends, common_friends_in, common_friends_out, common_friends_bi, total_friends, jaccards_coefficient, transient_friends, pas, friends_measure, opposite_direction_friends = compute_link_features(positive_edge_list + negative_edge_list, train_edge_list, neighborhood, neighborhood_in, neighborhood_out)
-neighborhood_sub_graphs, neighborhood_inclusive_sub_graphs, neighborhood_sub_graphs_link_number, neighborhood_inclusive_sub_graphs_link_number, neighborhood_sub_graphs_densities, neighborhood_inclusive_sub_graphs_densities, avg_scc, avg_wcc, avg_scc_inclusive = compute_complex_vertex_features(list(set(positive_node_list + negative_node_list)), data_graph)
+neighborhood_sub_graphs, neighborhood_inclusive_sub_graphs, neighborhood_sub_graphs_link_number, neighborhood_inclusive_sub_graphs_link_number, neighborhood_sub_graphs_densities, neighborhood_inclusive_sub_graphs_densities, avg_scc, avg_wcc, avg_scc_inclusive = compute_complex_vertex_features(list(set(positive_node_list + negative_node_list + test_node_list)), data_graph)
 features = []
 labels = []
 for edge in positive_edge_list:
@@ -242,6 +247,7 @@ for edge in negative_edge_list:
 features = np.array(features)
 labels = np.array(labels)
 X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, shuffle=True, random_state=42)
+pdb.set_trace()
 rf = RandomForestClassifier(n_estimators = 100, random_state = 42)  # You can adjust the parameters
 rf.fit(X_train, y_train)
 y_pred = rf.predict(X_test)
@@ -251,6 +257,7 @@ recall = recall_score(y_test, y_pred)
 f1 = f1_score(y_test, y_pred)
 print(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
 common_friends, common_friends_in, common_friends_out, common_friends_bi, total_friends, jaccards_coefficient, transient_friends, pas, friends_measure, opposite_direction_friends = compute_link_features(test_edge_list, train_edge_list, neighborhood, neighborhood_in, neighborhood_out)
+test_features = []
 for edge in test_edge_list:
 	edge0_features = [in_degree[edge[0]], out_degree[edge[0]], bi_degree[edge[0]], in_degree_densities[edge[0]], out_degree_densities[edge[0]], bi_degree_densities[edge[0]], neighborhood_sub_graphs_link_number[edge[0]], neighborhood_inclusive_sub_graphs_link_number[edge[0]], neighborhood_sub_graphs_densities[edge[0]], neighborhood_inclusive_sub_graphs_densities[edge[0]], avg_scc[edge[0]], avg_wcc[edge[0]], avg_scc_inclusive[edge[0]]]
 	edge1_features = [in_degree[edge[1]], out_degree[edge[1]], bi_degree[edge[1]], in_degree_densities[edge[1]], out_degree_densities[edge[1]], bi_degree_densities[edge[1]], neighborhood_sub_graphs_link_number[edge[1]], neighborhood_inclusive_sub_graphs_link_number[edge[1]], neighborhood_sub_graphs_densities[edge[1]], neighborhood_inclusive_sub_graphs_densities[edge[1]], avg_scc[edge[1]], avg_wcc[edge[1]], avg_scc_inclusive[edge[1]]]
@@ -263,3 +270,4 @@ with open("submissions.csv", "w") as file:
 	file.write("Id,Predictions\n")
 	for item in y_pred:
 		file.write("{0},{1}\n".format(count, item))
+		count = count + 1

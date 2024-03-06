@@ -77,11 +77,35 @@ def construct_graph(node_list, train_edge_list):
 def compute_vertex_features(node_list, data_graph):
     logger.info("Computing Vertex Features from Graph")
     neighborhood = {}
+    in_degree = {}
+    out_degree = {}
+    bi_degree = {}
+    in_degree_densities = {}
+    out_degree_densities = {}
+    bi_degree_densities = {}
+    for node in node_list:
+        predecessors = set(data_graph.predecessors(node))
+        successors = set(data_graph.successors(node))
+        neighborhood[node] = predecessors.union(successors)
+        in_degree[node] = len(predecessors)
+        out_degree[node] = len(successors)
+        bi_degree[node] = len(predecessors.intersection(successors))
+        total_neighbors = len(neighborhood[node])
+        if total_neighbors > 0:
+            in_degree_densities[node] = in_degree[node] / total_neighbors
+            out_degree_densities[node] = out_degree[node] / total_neighbors
+            bi_degree_densities[node] = bi_degree[node] / total_neighbors
+        else:
+            in_degree_densities[node] = out_degree_densities[node] = bi_degree_densities[node] = 0
+
+    return in_degree, out_degree, bi_degree, in_degree_densities, out_degree_densities, bi_degree_densities
+
+def compute_vertex_features(node_list, data_graph):
+    logger.info("Computing Vertex Features from Graph")
+    neighborhood = {}
     neighborhood_in = {}
     neighborhood_out = {}
     neighborhood_inclusive = {}
-    neighborhood_sub_graphs = {}
-    neighborhood_inclusive_sub_graphs = {}
     degree = {}
     in_degree = {}
     out_degree = {}
@@ -89,45 +113,30 @@ def compute_vertex_features(node_list, data_graph):
     in_degree_densities = {}
     out_degree_densities = {}
     bi_degree_densities = {}
-    neighborhood_sub_graphs_link_number = {}
-    neighborhood_inclusive_sub_graphs_link_number = {}
-    neighborhood_sub_graphs_densities = {}
-    neighborhood_inclusive_sub_graphs_densities = {}
-    avg_scc = {}
-    avg_wcc = {}
-    avg_scc_inclusive = {}
     for node in node_list:
-        neighborhood_in[node] = list(data_graph.predecessors(node))
-        neighborhood_out[node] = list(data_graph.successors(node))
+        neighborhood_in[node] = set(data_graph.predecessors(node))
+        neighborhood_out[node] = set(data_graph.successors(node))
         neighborhood[node] = set(neighborhood_in[node] + neighborhood_out[node])
         neighborhood_inclusive[node] = neighborhood[node].union({node})
         degree[node] = len(neighborhood[node])
         in_degree[node] = len(neighborhood_in[node])
         out_degree[node] = len(neighborhood_out[node])
-        bi_degree[node] = len(set(neighborhood_in[node]).intersection(set(neighborhood_out[node])))
-        in_degree_densities[node] = in_degree[node] / len(neighborhood[node])
-        out_degree_densities[node] = out_degree[node] / len(neighborhood[node])
-        bi_degree_densities[node] = bi_degree[node] / len(neighborhood[node])
+        bi_degree[node] = len(neighborhood_in[node]).intersection(neighborhood_out[node])
+        in_degree_densities[node] = in_degree[node] / degree[node]
+        out_degree_densities[node] = out_degree[node] / degree[node]
+        bi_degree_densities[node] = bi_degree[node] / degree[node]
     return neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive, in_degree, out_degree, bi_degree, in_degree_densities, out_degree_densities, bi_degree_densities
 
 def extract_positive_samples(data_graph, train_edge_list, samples_to_extract):
     logger.info("Extracting All Positive Samples")
     positive_edge_list = []
-    positive_node_list = []
-    count = 0
-    for edge in train_edge_list:
-        data_graph.remove_edge(edge[0], edge[1])
-        if random.choice([True, False]):
-            if count % 100:
-                logger.debug("Positive Sample Count: {0}".format(count))
-            count = count + 1
-            positive_edge_list.append(edge)
-            for node in edge:
-                positive_node_list.append(node)
-        data_graph.add_edge(edge[0], edge[1])
-        if count > samples_to_extract:
-            break
-    return positive_edge_list, list(set(positive_node_list))
+    positive_node_set = set()
+    sampled_edges = random.sample(train_edge_list, samples_to_extract)    
+    for edge in sampled_edges:
+        positive_edge_list.append(edge)
+        positive_node_set.update(edge)
+        
+    return positive_edge_list, list(positive_node_set)
 
 def extract_negative_samples(node_list, adjacency_matrix, samples_to_extract):
     logger.info("Extracting All Negative Samples")
