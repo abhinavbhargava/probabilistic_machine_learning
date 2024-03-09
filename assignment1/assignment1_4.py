@@ -190,10 +190,10 @@ if __name__ == "__main__":
     logger.info("Parsed Node and Link Features")
     features = []
     labels = []
-    for edge in positive_edge_list:
+    for edge in positive_edge_list[:2000000]:
         features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
         labels.append(1)
-    for edge in negative_edge_list:
+    for edge in negative_edge_list[:4000000]:
         features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
         labels.append(0)
     features = np.array(features)
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         test_features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
     test_features = np.array(test_features)
     y_pred = voting_clf.predict(test_features)
-    with open("submissions_2.csv", "w") as file:
+    with open("submissions_4.csv", "w") as file:
         count = 1
         file.write("Id,Predictions\n")
         for item in y_pred:

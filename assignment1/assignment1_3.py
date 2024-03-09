@@ -2,33 +2,17 @@
 ####                  IMPORTS                  ####
 ###################################################
 import os
+import ast
 import pdb
-import math
+import pickle
 import random
 import logging
-import argparse
 import numpy as np
 import networkx as nx
-from itertools import combinations
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.ensemble import VotingClassifier
-from sklearn.datasets import make_classification
-from sklearn.ensemble import BaggingClassifier, RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-###################################################
-####                  PARSER                   ####
-###################################################
-parser = argparse.ArgumentParser(description = "Input Parameters")
-parser.add_argument('--log_level', help = 'Log Level For Shell Logger.', choices = ["0", "10", "20", "30", "40", "50"], default = "20")
-parser.add_argument('--csv_path', help = 'Log Level For Shell Logger.', default = "data")
-parser.add_argument('--number_of_samples', help = 'Log Level For Shell Logger.', default = 0, type = int)
-args = parser.parse_args()
-console_log_level = int(args.log_level)
-number_of_samples = args.number_of_samples
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.ensemble import BaggingClassifier, RandomForestClassifier, VotingClassifier 
 ###################################################
 ####                   LOGGER                  ####
 ###################################################
@@ -38,7 +22,7 @@ shell_handler = logging.StreamHandler()
 shell_formatter = logging.Formatter('%(asctime)s %(filename)s %(levelname)s %(message)s')
 shell_handler.setFormatter(shell_formatter)
 logger.addHandler(shell_handler)
-shell_handler.setLevel(console_log_level)
+shell_handler.setLevel(20)
 ###################################################
 ####            FUNCTION DEFINITIONS           ####
 ###################################################
@@ -71,213 +55,167 @@ def construct_graph(node_list, train_edge_list):
     data_graph = nx.DiGraph()
     data_graph.add_nodes_from(node_list)
     data_graph.add_edges_from(train_edge_list)
-    adjacency_matrix = nx.adjacency_matrix(data_graph)
-    return data_graph, adjacency_matrix
+    return data_graph
 
-def compute_vertex_features(node_list, data_graph):
-    logger.info("Computing Vertex Features from Graph")
-    neighborhood = {}
-    in_degree = {}
-    out_degree = {}
-    bi_degree = {}
-    in_degree_densities = {}
-    out_degree_densities = {}
-    bi_degree_densities = {}
-    for node in node_list:
-        predecessors = set(data_graph.predecessors(node))
-        successors = set(data_graph.successors(node))
-        neighborhood[node] = predecessors.union(successors)
-        in_degree[node] = len(predecessors)
-        out_degree[node] = len(successors)
-        bi_degree[node] = len(predecessors.intersection(successors))
-        total_neighbors = len(neighborhood[node])
-        if total_neighbors > 0:
-            in_degree_densities[node] = in_degree[node] / total_neighbors
-            out_degree_densities[node] = out_degree[node] / total_neighbors
-            bi_degree_densities[node] = bi_degree[node] / total_neighbors
-        else:
-            in_degree_densities[node] = out_degree_densities[node] = bi_degree_densities[node] = 0
-
-    return in_degree, out_degree, bi_degree, in_degree_densities, out_degree_densities, bi_degree_densities
-
-def compute_vertex_features(node_list, data_graph):
-    logger.info("Computing Vertex Features from Graph")
-    neighborhood = {}
-    neighborhood_in = {}
-    neighborhood_out = {}
-    neighborhood_inclusive = {}
-    degree = {}
-    in_degree = {}
-    out_degree = {}
-    bi_degree = {}
-    in_degree_densities = {}
-    out_degree_densities = {}
-    bi_degree_densities = {}
-    for node in node_list:
-        neighborhood_in[node] = set(data_graph.predecessors(node))
-        neighborhood_out[node] = set(data_graph.successors(node))
-        neighborhood[node] = set(neighborhood_in[node] + neighborhood_out[node])
-        neighborhood_inclusive[node] = neighborhood[node].union({node})
-        degree[node] = len(neighborhood[node])
-        in_degree[node] = len(neighborhood_in[node])
-        out_degree[node] = len(neighborhood_out[node])
-        bi_degree[node] = len(neighborhood_in[node]).intersection(neighborhood_out[node])
-        if len(neighborhood[node]) > 0:
-            in_degree_densities[node] = in_degree[node] / degree[node]
-            out_degree_densities[node] = out_degree[node] / degree[node]
-            bi_degree_densities[node] = bi_degree[node] / degree[node]
-        else:
-            in_degree_densities[node] = out_degree_densities[node] = bi_degree_densities[node] = 0
-    return neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive, in_degree, out_degree, bi_degree, in_degree_densities, out_degree_densities, bi_degree_densities
-
-def extract_positive_samples(data_graph, train_edge_list, samples_to_extract):
-    logger.info("Extracting All Positive Samples")
-    positive_edge_list = []
-    positive_node_set = set()
-    sampled_edges = random.sample(train_edge_list, samples_to_extract)    
-    for edge in sampled_edges:
-        positive_edge_list.append(edge)
-        positive_node_set.update(edge)
-        
-    return positive_edge_list, list(positive_node_set)
-
-def extract_negative_samples(node_list, adjacency_matrix, samples_to_extract):
+def extract_negative_samples(node_list, train_edge_list, samples_to_extract):
     logger.info("Extracting All Negative Samples")
     negative_edge_list = []
     negative_node_set = set()
-    available_pairs = [(i, j) for i in range(adjacency_matrix.shape[0]) for j in range(i + 1, adjacency_matrix.shape[1]) if adjacency_matrix[i, j] == 0]
-    if len(available_pairs) > samples_to_extract:
-        sampled_pairs = random.sample(available_pairs, samples_to_extract)
-    else:
-        sampled_pairs = available_pairs
-    for i, j in sampled_pairs:
-        negative_edge_list.append((node_list[i], node_list[j]))
-        negative_node_set.update([node_list[i], node_list[j]])
+    num_nodes = len(node_list)
+    existing_edges = set(train_edge_list)
+    sampled_negative_edges = set()
+    while len(negative_edge_list) < samples_to_extract:
+        i, j = random.sample(range(num_nodes), 2)
+        edge = (node_list[i], node_list[j])
+        if edge not in existing_edges and edge not in sampled_negative_edges:
+            negative_edge_list.append(edge)
+            negative_node_set.update(edge)
+            sampled_negative_edges.add(edge)
     return negative_edge_list, list(negative_node_set)
 
-def compute_complex_vertex_features(node_list, data_graph, neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive):
-    logger.info("Computing Complex Vertex Features from Graph")
-    neighborhood_sub_graphs = {}
-    neighborhood_inclusive_sub_graphs = {}
-    neighborhood_sub_graphs_link_number = {}
-    neighborhood_inclusive_sub_graphs_link_number = {}
-    neighborhood_sub_graphs_densities = {}
-    neighborhood_inclusive_sub_graphs_densities = {}
-    avg_scc = {}
-    avg_wcc = {}
-    avg_scc_inclusive = {}
-    count = 0
-    logger.info("Total Complex Node Feature Count Computations: {0}".format(len(node_list)))
-    for node in node_list:
-        if count % 100 == 0:
-            logger.debug("Current Link Feature Count Computations: {0}".format(count))
-        neighborhood_inclusive_sub_graphs[node] = data_graph.subgraph(neighborhood_inclusive[node])
-        neighborhood_sub_graphs[node] = neighborhood_inclusive_sub_graphs[node].subgraph(neighborhood[node])
-        neighborhood_sub_graphs_link_number[node] = len(neighborhood_sub_graphs[node].edges())
-        neighborhood_inclusive_sub_graphs_link_number[node] = len(neighborhood_inclusive_sub_graphs[node].edges())
-        try:
-            neighborhood_sub_graphs_densities[node] = len(neighborhood[node]) / neighborhood_sub_graphs_link_number[node]
-            neighborhood_inclusive_sub_graphs_densities[node] = len(neighborhood[node]) / neighborhood_inclusive_sub_graphs_link_number[node]
-        except:
-            neighborhood_sub_graphs_densities[node] = 0
-            neighborhood_inclusive_sub_graphs_densities[node] = 0
-        try:
-            avg_scc[node] = len(neighborhood[node]) / nx.number_strongly_connected_components(neighborhood_sub_graphs[node])
-        except:
-            avg_scc[node] = 0
-        try:
-            avg_wcc[node] = len(neighborhood[node]) / nx.number_weakly_connected_components(neighborhood_sub_graphs[node])
-        except:
-            avg_scc[node] = 0
-        try:
-            avg_scc_inclusive[node] = len(neighborhood[node]) / nx.number_strongly_connected_components(neighborhood_inclusive_sub_graphs[node])
-        except:
-            avg_scc[node] = 0
-        count = count + 1
-    return neighborhood_sub_graphs, neighborhood_inclusive_sub_graphs, neighborhood_sub_graphs_link_number, neighborhood_inclusive_sub_graphs_link_number, neighborhood_sub_graphs_densities, neighborhood_inclusive_sub_graphs_densities, avg_scc, avg_wcc, avg_scc_inclusive
+def parse_node_features(node_list, data_graph):
+    logger.info("Parsing Extracted Node Features")
+    if os.path.exists("vertex_features.pickle"):
+        with open("vertex_features.pickle", "rb") as file:
+            vertex_features = pickle.load(file)
+    else:
+        if os.path.exists("vertex_features.csv"):
+            vertex_features = {}
+            with open("vertex_features.csv", "r") as file:
+                lines = file.readlines()
+                for line in lines:
+                    items = [ast.literal_eval(item) for item in line.split(";")]
+                    vertex_features[items[0]] = items[1:]
+            with open("vertex_features.pickle", "wb") as file:
+                pickle.dump(vertex_features, file)
+        else:
+            with open("vertex_features.csv", "w") as file:
+                for node in node_list:
+                    logger.info(node)
+                    neighborhood_in = list(data_graph.predecessors(node))
+                    neighborhood_out = list(data_graph.successors(node))
+                    neighborhood = set(neighborhood_in + neighborhood_out)
+                    neighborhood_inclusive = neighborhood.union({node})
+                    degree = len(neighborhood)
+                    in_degree = len(neighborhood_in)
+                    out_degree = len(neighborhood_out)
+                    bi_degree = len(set(neighborhood_in).intersection(set(neighborhood_out)))
+                    in_degree_densities = in_degree / len(neighborhood)
+                    out_degree_densities = out_degree / len(neighborhood)
+                    bi_degree_densities = bi_degree / len(neighborhood)
+                    neighborhood_inclusive_sub_graphs_link_number = sum(1 for n1, n2 in data_graph.edges(neighborhood_inclusive) if n1 in neighborhood_inclusive and n2 in neighborhood_inclusive)
+                    neighborhood_sub_graphs_link_number = sum(1 for n1, n2 in data_graph.edges(neighborhood) if n1 in neighborhood and n2 in neighborhood)
+                    try:
+                        neighborhood_sub_graphs_densities = degree / neighborhood_sub_graphs_link_number
+                        neighborhood_inclusive_sub_graphs_densities = degree / neighborhood_inclusive_sub_graphs_link_number
+                    except:
+                        neighborhood_sub_graphs_densities = 0
+                        neighborhood_inclusive_sub_graphs_densities = 0
+                    try:
+                        avg_scc = degree / nx.number_strongly_connected_components(neighborhood_sub_graphs)
+                    except:
+                        avg_scc = 0
+                    try:
+                        avg_wcc = degree / nx.number_weakly_connected_components(neighborhood_sub_graphs)
+                    except:
+                        avg_wcc = 0
+                    try:
+                        avg_scc_inclusive = degree / nx.number_strongly_connected_components(neighborhood_inclusive_sub_graphs)
+                    except:
+                        avg_scc_inclusive = 0
+                    file.write("{0};{1};{2};{3};{4};{5};{6};{7};{8};{9};{10};{11};{12};{13};{14};{15};{16};{17};{18}\n".format(str(node), str(neighborhood_in), str(neighborhood_out), str(neighborhood), str(neighborhood_inclusive), str(degree), str(in_degree), str(out_degree), str(bi_degree), str(in_degree_densities), str(out_degree_densities), str(bi_degree_densities), str(neighborhood_inclusive_sub_graphs_link_number), str(neighborhood_sub_graphs_link_number), str(neighborhood_sub_graphs_densities), str(neighborhood_inclusive_sub_graphs_densities), str(avg_scc), str(avg_wcc), str(avg_scc_inclusive)))
+            vertex_features = parse_node_features(node_list, data_graph)
+    return vertex_features
 
-def compute_link_features(sample_edge_list, train_edge_list, neighborhood, neighborhood_in, neighborhood_out):
-    logger.info("Computing Link Features from Graph")
-    common_friends = {}
-    common_friends_in = {}
-    common_friends_out = {}
-    common_friends_bi = {}
-    total_friends = {}
-    jaccards_coefficient = {}
-    transient_friends = {}
-    pas = {}
-    friends_measure = {}
-    opposite_direction_friends = {}
-    count = 0
-    logger.info("Total Link Feature Count Computations: {0}".format(len(sample_edge_list)))
-    for pair in sample_edge_list:
-        if count % 100 == 0:
-            logger.debug("Current Link Feature Count Computations: {0}".format(count))
-        common_friends[pair] = len(neighborhood[pair[0]]).intersection(neighborhood[pair[1]])
-        common_friends_in[pair] = len(neighborhood_in[pair[0]]).intersection(neighborhood_in[pair[1]])
-        common_friends_out[pair] = len(neighborhood_out[pair[0]]).intersection(neighborhood_out[pair[1]])
-        common_friends_bi[pair] = len(neighborhood_in[pair[0]]).intersection(neighborhood_out[pair[1]])
-        total_friends[pair] = len(neighborhood[pair[0]]).union(neighborhood[pair[1]])
-        jaccards_coefficient[pair] = common_friends[pair] / total_friends[pair] if total_friends[pair] > 0 else 0
-        transient_friends[pair] = len(neighborhood_out[pair[0]]).intersection(neighborhood_in[pair[1]])
-        pas[pair] = len(neighborhood[pair[0]]) * len(neighborhood[pair[1]])
-        # friends_measure[pair] = 0
-        # for node_u in neighborhood[pair[0]]:
-        #   for node_v in neighborhood[pair[1]]:
-        #       if node_u == node_v or (node_u, node_v) in train_edge_list or (node_v, node_u) in train_edge_list:
-        #           friends_measure[pair] += 1
-        opposite_direction_friends[pair] = 1 if (pair[1], pair[0]) in train_edge_list else 0
-        count = count + 1
-    return common_friends, common_friends_in, common_friends_out, common_friends_bi, total_friends, jaccards_coefficient, transient_friends, pas, friends_measure, opposite_direction_friends
+def parse_link_features(node_list, data_graph, train_edge_list, test_edge_list):
+    logger.info("Parsing Extracted Link Features")
+    if os.path.exists("link_features.pickle"):
+        with open("link_features.pickle", "rb") as file:
+            link_features = pickle.load(file)
+        # for link in link_features.keys():
+        #     if link not in train_edge_list and link not in test_edge_list:
+        #         negative_edge_list.append(link)
+        negative_edge_list = list(set([key for key in link_features.keys()]) - set(train_edge_list).union(set(test_edge_list)))
+        negative_edge_list = list(set([key for key in link_features.keys()]) - set(train_edge_list).union(set(test_edge_list)))
+    else:
+        if os.path.exists("link_features.csv"):
+            link_features = {}
+            negative_edge_list = []
+            with open("link_features.csv", "r") as file:
+                lines = file.readlines()
+                for line in lines:
+                    items = [ast.literal_eval(item) for item in line.split(";")]
+                    link_features[items[0]] = items[1:]
+                    # if items[0] not in train_edge_list and items[0] not in test_edge_list:
+                    #     negative_edge_list.append(link)
+            with open("link_features.pickle", "wb") as file:
+                pickle.dump(link_features, file)
+            negative_edge_list = list(set([key for key in link_features.keys()]) - set(train_edge_list).union(set(test_edge_list)))
+        else:
+            with open("link_features.csv", "w") as file:
+                neighborhood_in = {}
+                neighborhood_out = {}
+                neighborhood = {}
+                for node in node_list:
+                    neighborhood_in[node] = set(data_graph.predecessors(node))
+                    neighborhood_out[node] = set(data_graph.successors(node))
+                    neighborhood[node] = neighborhood_in[node].union(neighborhood_out[node])
+                negative_edge_list, negative_node_list = extract_negative_samples(node_list, train_edge_list, 6000000)
+                edge_list = train_edge_list + test_edge_list + negative_edge_list
+                count = 0
+                for pair in edge_list:
+                    logger.info(count)
+                    common_friends = len(neighborhood[pair[0]].intersection(neighborhood[pair[1]]))
+                    common_friends_in = len(neighborhood_in[pair[0]].intersection(neighborhood_in[pair[1]]))
+                    common_friends_out = len(neighborhood_out[pair[0]].intersection(neighborhood_out[pair[1]]))
+                    common_friends_bi = len(neighborhood_in[pair[0]].intersection(neighborhood_out[pair[1]]))
+                    total_friends = len(neighborhood[pair[0]].union(neighborhood[pair[1]]))
+                    jaccards_coefficient = common_friends / total_friends if total_friends > 0 else 0
+                    transient_friends = len(neighborhood_out[pair[0]].intersection(neighborhood_in[pair[1]]))
+                    pas = len(neighborhood[pair[0]]) * len(neighborhood[pair[1]])
+                    #opposite_direction_friends = 1 if (pair[1], pair[0]) in train_edge_list else 0
+                    file.write("{0};{1};{2};{3};{4};{5};{6};{7};{8}\n".format(str(pair), str(common_friends), str(common_friends_in), str(common_friends_out), str(common_friends_bi), str(total_friends), str(jaccards_coefficient), str(transient_friends), str(pas)))
+                    count = count + 1
+            link_features = parse_link_features(node_list, data_graph, train_edge_list, test_edge_list)
+    positive_edge_list = random.sample(train_edge_list, round(len(negative_edge_list) * 0.5))
+    return link_features, negative_edge_list, positive_edge_list
 
-logger.info("CSV Path: {0}".format(os.path.realpath(args.csv_path)))
-node_list, train_edge_list, test_edge_list, test_node_list = parse_csv(os.path.realpath(args.csv_path))
-data_graph, adjacency_matrix = construct_graph(node_list, train_edge_list)
-neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive, in_degree, out_degree, bi_degree, in_degree_densities, out_degree_densities, bi_degree_densities = compute_vertex_features(node_list, data_graph)
-positive_edge_list, positive_node_list = extract_positive_samples(data_graph, train_edge_list, number_of_samples)
-negative_edge_list, negative_node_list = extract_negative_samples(node_list, adjacency_matrix, number_of_samples)
-common_friends, common_friends_in, common_friends_out, common_friends_bi, total_friends, jaccards_coefficient, transient_friends, pas, friends_measure, opposite_direction_friends = compute_link_features(positive_edge_list + negative_edge_list, train_edge_list, neighborhood, neighborhood_in, neighborhood_out)
-neighborhood_sub_graphs, neighborhood_inclusive_sub_graphs, neighborhood_sub_graphs_link_number, neighborhood_inclusive_sub_graphs_link_number, neighborhood_sub_graphs_densities, neighborhood_inclusive_sub_graphs_densities, avg_scc, avg_wcc, avg_scc_inclusive = compute_complex_vertex_features(list(set(positive_node_list + negative_node_list + test_node_list)), data_graph, neighborhood, neighborhood_in, neighborhood_out, neighborhood_inclusive)
-features = []
-labels = []
-for edge in positive_edge_list:
-    edge0_features = [in_degree[edge[0]], out_degree[edge[0]], bi_degree[edge[0]], in_degree_densities[edge[0]], out_degree_densities[edge[0]], bi_degree_densities[edge[0]], neighborhood_sub_graphs_link_number[edge[0]], neighborhood_inclusive_sub_graphs_link_number[edge[0]], neighborhood_sub_graphs_densities[edge[0]], neighborhood_inclusive_sub_graphs_densities[edge[0]], avg_scc[edge[0]], avg_wcc[edge[0]], avg_scc_inclusive[edge[0]]]
-    edge1_features = [in_degree[edge[1]], out_degree[edge[1]], bi_degree[edge[1]], in_degree_densities[edge[1]], out_degree_densities[edge[1]], bi_degree_densities[edge[1]], neighborhood_sub_graphs_link_number[edge[1]], neighborhood_inclusive_sub_graphs_link_number[edge[1]], neighborhood_sub_graphs_densities[edge[1]], neighborhood_inclusive_sub_graphs_densities[edge[1]], avg_scc[edge[1]], avg_wcc[edge[1]], avg_scc_inclusive[edge[1]]]
-    link_features = [common_friends[edge], common_friends_in[edge], common_friends_out[edge], common_friends_bi[edge], total_friends[edge], jaccards_coefficient[edge], transient_friends[edge], pas[edge], opposite_direction_friends[edge]]
-    features.append(edge0_features + edge1_features + link_features)
-    labels.append(1)
-for edge in negative_edge_list:
-    edge0_features = [in_degree[edge[0]], out_degree[edge[0]], bi_degree[edge[0]], in_degree_densities[edge[0]], out_degree_densities[edge[0]], bi_degree_densities[edge[0]], neighborhood_sub_graphs_link_number[edge[0]], neighborhood_inclusive_sub_graphs_link_number[edge[0]], neighborhood_sub_graphs_densities[edge[0]], neighborhood_inclusive_sub_graphs_densities[edge[0]], avg_scc[edge[0]], avg_wcc[edge[0]], avg_scc_inclusive[edge[0]]]
-    edge1_features = [in_degree[edge[1]], out_degree[edge[1]], bi_degree[edge[1]], in_degree_densities[edge[1]], out_degree_densities[edge[1]], bi_degree_densities[edge[1]], neighborhood_sub_graphs_link_number[edge[1]], neighborhood_inclusive_sub_graphs_link_number[edge[1]], neighborhood_sub_graphs_densities[edge[1]], neighborhood_inclusive_sub_graphs_densities[edge[1]], avg_scc[edge[1]], avg_wcc[edge[1]], avg_scc_inclusive[edge[1]]]
-    link_features = [common_friends[edge], common_friends_in[edge], common_friends_out[edge], common_friends_bi[edge], total_friends[edge], jaccards_coefficient[edge], transient_friends[edge], pas[edge], opposite_direction_friends[edge]]
-    features.append(edge0_features + edge1_features + link_features)
-    labels.append(0)
-features = np.array(features)
-labels = np.array(labels)
-X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, shuffle=True, random_state=42)
-pdb.set_trace()
-bagging_classifier = BaggingClassifier(base_estimator=DecisionTreeClassifier(), n_estimators=100, random_state=42)
-rf_classifier = RandomForestClassifier(n_estimators=100, random_state=42)
-voting_clf = VotingClassifier(estimators=[('bagging', bagging_classifier), ('rf', rf_classifier)], voting='soft')
-voting_clf.fit(X_train, y_train)
-y_pred = voting_clf.predict(X_test)
-accuracy = accuracy_score(y_test, y_pred)
-precision = precision_score(y_test, y_pred)
-recall = recall_score(y_test, y_pred)
-f1 = f1_score(y_test, y_pred)
-print(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
-common_friends, common_friends_in, common_friends_out, common_friends_bi, total_friends, jaccards_coefficient, transient_friends, pas, friends_measure, opposite_direction_friends = compute_link_features(test_edge_list, train_edge_list, neighborhood, neighborhood_in, neighborhood_out)
-test_features = []
-for edge in test_edge_list:
-    edge0_features = [in_degree[edge[0]], out_degree[edge[0]], bi_degree[edge[0]], in_degree_densities[edge[0]], out_degree_densities[edge[0]], bi_degree_densities[edge[0]], neighborhood_sub_graphs_link_number[edge[0]], neighborhood_inclusive_sub_graphs_link_number[edge[0]], neighborhood_sub_graphs_densities[edge[0]], neighborhood_inclusive_sub_graphs_densities[edge[0]], avg_scc[edge[0]], avg_wcc[edge[0]], avg_scc_inclusive[edge[0]]]
-    edge1_features = [in_degree[edge[1]], out_degree[edge[1]], bi_degree[edge[1]], in_degree_densities[edge[1]], out_degree_densities[edge[1]], bi_degree_densities[edge[1]], neighborhood_sub_graphs_link_number[edge[1]], neighborhood_inclusive_sub_graphs_link_number[edge[1]], neighborhood_sub_graphs_densities[edge[1]], neighborhood_inclusive_sub_graphs_densities[edge[1]], avg_scc[edge[1]], avg_wcc[edge[1]], avg_scc_inclusive[edge[1]]]
-    link_features = [common_friends[edge], common_friends_in[edge], common_friends_out[edge], common_friends_bi[edge], total_friends[edge], jaccards_coefficient[edge], transient_friends[edge], pas[edge], opposite_direction_friends[edge]]
-    test_features.append(edge0_features + edge1_features + link_features)
-test_features = np.array(test_features)
-y_pred = rf.predict(test_features)
-with open("submissions.csv", "w") as file:
-    count = 1
-    file.write("Id,Predictions\n")
-    for item in y_pred:
-        file.write("{0},{1}\n".format(count, item))
-        count = count + 1
+if __name__ == "__main__":
+    logger.info("CSV Path: {0}".format(os.path.realpath("data")))
+    node_list, train_edge_list, test_edge_list, test_node_list = parse_csv(os.path.realpath("data"))
+    data_graph = construct_graph(node_list, train_edge_list)
+    vertex_features = parse_node_features(node_list, data_graph)
+    link_features, negative_edge_list, positive_edge_list = parse_link_features(node_list, data_graph, train_edge_list, test_edge_list)
+    logger.info("Parsed Node and Link Features")
+    features = []
+    labels = []
+    for edge in positive_edge_list[:2000000]:
+        features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
+        labels.append(1)
+    for edge in negative_edge_list[:4000000]:
+        features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
+        labels.append(0)
+    features = np.array(features)
+    labels = np.array(labels)
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, shuffle=True, random_state=42)
+    bagging_classifier = BaggingClassifier(base_estimator=DecisionTreeClassifier(), n_estimators=100, random_state=42)
+    rf_classifier = RandomForestClassifier(n_estimators=100, random_state=42)
+    voting_clf = VotingClassifier(estimators=[('bagging', bagging_classifier), ('rf', rf_classifier)], voting='soft')
+    voting_clf.fit(X_train, y_train)
+    y_pred = voting_clf.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+    logger.info(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+    test_features = []
+    for edge in test_edge_list:
+        test_features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
+    test_features = np.array(test_features)
+    y_pred = voting_clf.predict(test_features)
+    with open("submissions_3.csv", "w") as file:
+        count = 1
+        file.write("Id,Predictions\n")
+        for item in y_pred:
+            file.write("{0},{1}\n".format(count, item))
+            count = count + 1
