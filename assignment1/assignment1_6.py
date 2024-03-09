@@ -10,7 +10,8 @@ import logging
 import numpy as np
 import networkx as nx
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegressionCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 ###################################################
@@ -189,21 +190,24 @@ if __name__ == "__main__":
     logger.info("Parsed Node and Link Features")
     features = []
     labels = []
-    for edge in positive_edge_list[:2000000]:
-        features.append(link_features[edge])
+    for edge in positive_edge_list:
+        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
         labels.append(1)
     for edge in negative_edge_list:
-        features.append(link_features[edge])
+        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
         labels.append(0)
     features = np.array(features)
     labels = np.array(labels)
-    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, shuffle=True, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.4, shuffle=True, random_state=42)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
-    logistic_model = LogisticRegression(random_state=42, max_iter=10000, C=1.0)
-    logistic_model.fit(X_train_scaled, y_train)
-    y_pred = logistic_model.predict(X_test_scaled)
+    pca = PCA(n_components=0.95)
+    X_train_pca = pca.fit_transform(X_train_scaled)
+    X_test_pca = pca.transform(X_test_scaled)
+    logistic_model = LogisticRegressionCV(Cs=[0.01, 0.1, 1, 10, 100], cv=5, random_state=42, max_iter=10000)
+    logistic_model.fit(X_train_pca, y_train)
+    y_pred = logistic_model.predict(X_test_pca)
     accuracy = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
@@ -211,11 +215,12 @@ if __name__ == "__main__":
     logger.info(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
     test_features = []
     for edge in test_edge_list:
-        test_features.append(link_features[edge])
+        test_features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
     test_features = np.array(test_features)
     test_features_scaled = scaler.transform(test_features)
-    y_pred = logistic_model.predict(test_features_scaled)
-    with open("submissions_6.csv", "w") as file:
+    test_features_pca = pca.transform(test_features_scaled)
+    y_pred = logistic_model.predict(test_features_pca)
+    with open("submissions_7.csv", "w") as file:
         count = 1
         file.write("Id,Predictions\n")
         for item in y_pred:
