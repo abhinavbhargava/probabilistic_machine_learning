@@ -9,11 +9,13 @@ import random
 import logging
 import numpy as np
 import networkx as nx
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import AdaBoostClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegressionCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.ensemble import BaggingClassifier, RandomForestClassifier, VotingClassifier 
+from sklearn.naive_bayes import GaussianNB
+from sklearn.ensemble import VotingClassifier 
 ###################################################
 ####                   LOGGER                  ####
 ###################################################
@@ -178,7 +180,7 @@ def parse_link_features(node_list, data_graph, train_edge_list, test_edge_list):
                     file.write("{0};{1};{2};{3};{4};{5};{6};{7};{8}\n".format(str(pair), str(common_friends), str(common_friends_in), str(common_friends_out), str(common_friends_bi), str(total_friends), str(jaccards_coefficient), str(transient_friends), str(pas)))
                     count = count + 1
             link_features = parse_link_features(node_list, data_graph, train_edge_list, test_edge_list)
-    positive_edge_list = random.sample(train_edge_list, len(negative_edge_list))
+    positive_edge_list = random.sample(train_edge_list, round(len(negative_edge_list) * 0.5))
     return link_features, negative_edge_list, positive_edge_list
 
 if __name__ == "__main__":
@@ -187,21 +189,29 @@ if __name__ == "__main__":
     data_graph = construct_graph(node_list, train_edge_list)
     vertex_features = parse_node_features(node_list, data_graph)
     link_features, negative_edge_list, positive_edge_list = parse_link_features(node_list, data_graph, train_edge_list, test_edge_list)
-    logger.info("Parsed Node and Link Features")
+    logger.info("Constructing Feature Vector")
     features = []
     labels = []
     for edge in positive_edge_list:
-        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
+        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:1] + link_features[edge][5:])
         labels.append(1)
     for edge in negative_edge_list:
-        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
+        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:1] + link_features[edge][5:])
         labels.append(0)
     features = np.array(features)
     labels = np.array(labels)
     X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, shuffle=True, random_state=42)
-    ada_boost_classifier = AdaBoostClassifier(DecisionTreeClassifier(), n_estimators=1000, learning_rate=0.05, random_state=42)
-    ada_boost_classifier.fit(X_train, y_train)
-    y_pred = ada_boost_classifier.predict(X_test)
+    logger.info("Applying Transforms")
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    pca = PCA(n_components=0.95)
+    X_train_pca = pca.fit_transform(X_train_scaled)
+    X_test_pca = pca.transform(X_test_scaled)
+    logger.info("Training Model")
+    gnb = GaussianNB()
+    gnb.fit(X_train_pca, y_train)
+    y_pred = gnb.predict(X_test_pca)
     accuracy = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
@@ -209,10 +219,12 @@ if __name__ == "__main__":
     logger.info(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
     test_features = []
     for edge in test_edge_list:
-        test_features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
+        test_features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:1] + link_features[edge][5:])
     test_features = np.array(test_features)
-    y_pred = ada_boost_classifier.predict(test_features)
-    with open("submissions_1.csv", "w") as file:
+    test_features_scaled = scaler.transform(test_features)
+    test_features_pca = pca.transform(test_features_scaled)
+    y_pred = gnb.predict(test_features_pca)
+    with open("submissions_8.csv", "w") as file:
         count = 1
         file.write("Id,Predictions\n")
         for item in y_pred:

@@ -10,7 +10,7 @@ import logging
 import numpy as np
 import networkx as nx
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import AdaBoostClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.ensemble import BaggingClassifier, RandomForestClassifier, VotingClassifier 
@@ -178,7 +178,7 @@ def parse_link_features(node_list, data_graph, train_edge_list, test_edge_list):
                     file.write("{0};{1};{2};{3};{4};{5};{6};{7};{8}\n".format(str(pair), str(common_friends), str(common_friends_in), str(common_friends_out), str(common_friends_bi), str(total_friends), str(jaccards_coefficient), str(transient_friends), str(pas)))
                     count = count + 1
             link_features = parse_link_features(node_list, data_graph, train_edge_list, test_edge_list)
-    positive_edge_list = random.sample(train_edge_list, len(negative_edge_list))
+    positive_edge_list = random.sample(train_edge_list, round(len(negative_edge_list) * 0.5))
     return link_features, negative_edge_list, positive_edge_list
 
 if __name__ == "__main__":
@@ -191,17 +191,21 @@ if __name__ == "__main__":
     features = []
     labels = []
     for edge in positive_edge_list:
-        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
+        features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
         labels.append(1)
     for edge in negative_edge_list:
-        features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
+        features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
         labels.append(0)
     features = np.array(features)
     labels = np.array(labels)
     X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, shuffle=True, random_state=42)
-    ada_boost_classifier = AdaBoostClassifier(DecisionTreeClassifier(), n_estimators=1000, learning_rate=0.05, random_state=42)
-    ada_boost_classifier.fit(X_train, y_train)
-    y_pred = ada_boost_classifier.predict(X_test)
+    estimator = DecisionTreeClassifier(max_depth=10, min_samples_split=4, min_samples_leaf=2, max_features='sqrt')
+    bagging_classifier = BaggingClassifier(estimator=estimator, n_estimators=100, random_state=42)
+    rf_classifier = RandomForestClassifier(n_estimators=100, max_depth=10, min_samples_split=4, min_samples_leaf=2, max_features='sqrt', random_state=42)
+    logistic_regression = LogisticRegression(C=1.0, penalty='l2', solver='liblinear', random_state=42)
+    voting_clf = VotingClassifier(estimators=[('logistic', logistic_regression), ('bagging', bagging_classifier), ('rf', rf_classifier)], voting='soft')
+    voting_clf.fit(X_train, y_train)
+    y_pred = voting_clf.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
@@ -209,10 +213,10 @@ if __name__ == "__main__":
     logger.info(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
     test_features = []
     for edge in test_edge_list:
-        test_features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
+        test_features.append(vertex_features[edge[0]][4:] + vertex_features[edge[1]][4:] + link_features[edge])
     test_features = np.array(test_features)
-    y_pred = ada_boost_classifier.predict(test_features)
-    with open("submissions_1.csv", "w") as file:
+    y_pred = voting_clf.predict(test_features)
+    with open("submissions_2.csv", "w") as file:
         count = 1
         file.write("Id,Predictions\n")
         for item in y_pred:

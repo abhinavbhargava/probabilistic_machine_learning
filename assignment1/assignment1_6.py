@@ -187,10 +187,10 @@ if __name__ == "__main__":
     data_graph = construct_graph(node_list, train_edge_list)
     vertex_features = parse_node_features(node_list, data_graph)
     link_features, negative_edge_list, positive_edge_list = parse_link_features(node_list, data_graph, train_edge_list, test_edge_list)
-    logger.info("Parsed Node and Link Features")
+    logger.info("Constructing Feature Vector")
     features = []
     labels = []
-    for edge in positive_edge_list:
+    for edge in positive_edge_list[:500000]:
         features.append(vertex_features[edge[0]][4:5] + vertex_features[edge[0]][12:13] + vertex_features[edge[1]][4:5] + vertex_features[edge[1]][12:13] + link_features[edge][0:4] + link_features[edge][5:])
         labels.append(1)
     for edge in negative_edge_list:
@@ -198,13 +198,15 @@ if __name__ == "__main__":
         labels.append(0)
     features = np.array(features)
     labels = np.array(labels)
-    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.4, shuffle=True, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, shuffle=True, random_state=42)
+    logger.info("Applying Transforms")
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     pca = PCA(n_components=0.95)
     X_train_pca = pca.fit_transform(X_train_scaled)
     X_test_pca = pca.transform(X_test_scaled)
+    logger.info("Training Model")
     logistic_model = LogisticRegressionCV(Cs=[0.01, 0.1, 1, 10, 100], cv=5, random_state=42, max_iter=10000)
     logistic_model.fit(X_train_pca, y_train)
     y_pred = logistic_model.predict(X_test_pca)
